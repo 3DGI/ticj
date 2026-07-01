@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ticj</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <aside class="panel">
+        <header class="brand">
+          <h1>ticj</h1>
+          <p>Tile index and FlatCityBuf selector</p>
+        </header>
+
+        <section class="group">
+          <label class="label" for="fileInput">Local FCB or FGB tile index</label>
+          <input id="fileInput" type="file" accept=".fcb,.fgb,.flatgeobuf,application/octet-stream">
+
+          <label class="label" for="urlInput">Remote FCB or FGB tile index URL</label>
+          <div class="row">
+            <input id="urlInput" type="url" placeholder="https://example.com/data.fcb">
+            <button id="loadUrlButton" type="button">Load</button>
+          </div>
+        </section>
+
+        <section class="group">
+          <div class="fieldline">
+            <label class="label" for="thresholdInput">Split threshold</label>
+            <output id="thresholdValue">256</output>
+          </div>
+          <input id="thresholdInput" type="range" min="1" max="10000" value="256" step="1">
+          <input id="thresholdNumber" type="number" min="1" value="256">
+        </section>
+
+        <section class="group">
+          <div class="actions">
+            <button id="fitButton" type="button" disabled>Fit</button>
+            <button id="clearButton" type="button" disabled>Clear selection</button>
+            <button id="openCjLoupeButton" type="button" disabled>Open in CJLoupe</button>
+          </div>
+          <label class="label" for="projectionSelect">Source CRS</label>
+          <select id="projectionSelect">
+            <option value="auto">Auto</option>
+            <option value="EPSG:28992">EPSG:28992 RD New</option>
+            <option value="EPSG:3857">EPSG:3857 Web Mercator</option>
+            <option value="EPSG:4326">EPSG:4326 lon/lat</option>
+          </select>
+        </section>
+
+        <section class="group stats">
+          <dl>
+            <div><dt>Features</dt><dd id="featureCount">-</dd></div>
+            <div><dt>Node size</dt><dd id="nodeSize">-</dd></div>
+            <div><dt>Levels</dt><dd id="levelCount">-</dd></div>
+            <div><dt>Visible cells</dt><dd id="visibleCount">-</dd></div>
+            <div><dt>Selected features</dt><dd id="selectedCount">0</dd></div>
+          </dl>
+        </section>
+
+        <section class="group export">
+          <div class="actions">
+            <button id="exportButton" type="button" disabled>Build CJLoupe URL</button>
+            <button id="copyCjLoupeUrlButton" type="button" disabled>Copy</button>
+          </div>
+          <textarea id="cjLoupeUrlOutput" class="encoded-output" spellcheck="false" readonly placeholder="CJLoupe URL appears here"></textarea>
+        </section>
+
+        <p id="status" class="status">Choose a file or load a URL.</p>
+      </aside>
+
+      <section class="mapwrap">
+        <div id="map"></div>
+        <div id="tooltip" class="tooltip" hidden></div>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

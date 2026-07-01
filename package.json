@@ -1,0 +1,20 @@
+{
+  "name": "ticj",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "index:tiles": "node index_cityjsonl_tiles.js",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "flatgeobuf": "^4.4.0",
+    "ol": "^10.9.0",
+    "proj4": "^2.20.9"
+  },
+  "devDependencies": {
+    "vite": "^8.0.8"
+  }
+}
