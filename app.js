@@ -37,7 +37,6 @@ rdProjection?.setExtent([-285401.92, 22598.08, 595401.92, 903401.92]);
 const mapEl = document.querySelector("#map");
 const tooltip = document.querySelector("#tooltip");
 
-const fileInput = document.querySelector("#fileInput");
 const urlInput = document.querySelector("#urlInput");
 const loadUrlButton = document.querySelector("#loadUrlButton");
 const thresholdInput = document.querySelector("#thresholdInput");
@@ -47,10 +46,8 @@ const fitButton = document.querySelector("#fitButton");
 const clearButton = document.querySelector("#clearButton");
 const openCjLoupeButton = document.querySelector("#openCjLoupeButton");
 const projectionSelect = document.querySelector("#projectionSelect");
-const exportButton = document.querySelector("#exportButton");
-const copyCjLoupeUrlButton = document.querySelector("#copyCjLoupeUrlButton");
-const cjLoupeUrlOutput = document.querySelector("#cjLoupeUrlOutput");
 const statusEl = document.querySelector("#status");
+const fcbOnlyElements = document.querySelectorAll("[data-source-mode='fcb']");
 
 const featureCountEl = document.querySelector("#featureCount");
 const nodeSizeEl = document.querySelector("#nodeSize");
@@ -81,24 +78,6 @@ const map = new OlMap({
     zoom: 8,
   }),
 });
-
-class FileSource {
-  constructor(file) {
-    this.file = file;
-    this.label = file.name;
-    this.url = null;
-    this.size = file.size;
-  }
-
-  async read(start, length) {
-    const blob = this.file.slice(start, start + length);
-    return new Uint8Array(await blob.arrayBuffer());
-  }
-
-  async readAll() {
-    return new Uint8Array(await this.file.arrayBuffer());
-  }
-}
 
 class UrlSource {
   constructor(url) {
@@ -272,7 +251,6 @@ class FcbIndex {
 }
 
 async function loadSource(source) {
-  clearExportOutputs();
   if (isLikelyFlatGeobufSource(source)) {
     await loadFlatGeobufTileIndexSource(source);
     return;
@@ -316,6 +294,7 @@ async function loadFlatCityBufSource(source) {
     leafIndex: null,
     sourceProjection: resolveSourceProjection(extent),
   };
+  setSourceModeUi(app.mode);
   await rebuildVisible();
   updateHeaderStats();
   updateProjectionControl();
@@ -355,6 +334,7 @@ async function loadFlatGeobufTileIndexSource(source) {
     sourceProjection: resolveSourceProjection(extent),
   };
 
+  setSourceModeUi(app.mode);
   visibleCountEl.textContent = String(tiles.length);
   updateHeaderStats();
   updateProjectionControl();
@@ -661,28 +641,6 @@ function updateProjectionControl() {
   projectionSelect.title = `Auto detected ${app.sourceProjection}`;
 }
 
-async function buildCjLoupeUrlOutput() {
-  if (!app) {
-    return;
-  }
-  if (!canOpenSelectedCjLoupeUrl()) {
-    cjLoupeUrlOutput.value = app.mode === FGB_TILE_INDEX_SOURCE_KIND
-      ? "Select a tile from a remote FlatGeobuf tile index first."
-      : "Select features from a remote FCB URL first.";
-    copyCjLoupeUrlButton.disabled = true;
-    return;
-  }
-
-  const url = await getSelectedCjLoupeUrl();
-  cjLoupeUrlOutput.value = url ?? "";
-  copyCjLoupeUrlButton.disabled = !url;
-}
-
-function clearExportOutputs() {
-  cjLoupeUrlOutput.value = "";
-  copyCjLoupeUrlButton.disabled = true;
-}
-
 function updateHeaderStats() {
   if (!app) {
     return;
@@ -712,7 +670,6 @@ function updateSelectionStats() {
   }
   selectedCountEl.textContent = count.toLocaleString();
   clearButton.disabled = app.selected.size === 0;
-  exportButton.disabled = app.selected.size === 0;
   openCjLoupeButton.disabled = !canOpenSelectedCjLoupeUrl();
 }
 
@@ -720,8 +677,12 @@ function setButtons(enabled) {
   fitButton.disabled = !enabled;
   clearButton.disabled = true;
   openCjLoupeButton.disabled = true;
-  exportButton.disabled = true;
-  copyCjLoupeUrlButton.disabled = true;
+}
+
+function setSourceModeUi(mode) {
+  for (const element of fcbOnlyElements) {
+    element.hidden = mode !== FCB_SOURCE_KIND;
+  }
 }
 
 function setStatus(message) {
@@ -738,7 +699,6 @@ function syncThreshold(value) {
   }
   app.threshold = threshold;
   app.selected.clear();
-  clearExportOutputs();
   clearTimeout(thresholdDebounce);
   if (app.mode === FGB_TILE_INDEX_SOURCE_KIND) {
     updateSelectionStats();
@@ -965,8 +925,10 @@ function mergeRanges(ranges) {
   return merged;
 }
 
+const CJLOUPE_URL = "https://3dgi.github.io/CJLoupe/";
+
 function buildByteRangeCjLoupeUrl(fcbUrl, ranges) {
-  const url = new URL("../", window.location.href);
+  const url = new URL(CJLOUPE_URL);
   url.search = "";
   url.hash = "";
   url.searchParams.set("fcbUrl", fcbUrl);
@@ -976,7 +938,7 @@ function buildByteRangeCjLoupeUrl(fcbUrl, ranges) {
 
 function buildCityJsonCjLoupeUrl(cityJsonUrls) {
   const urls = Array.isArray(cityJsonUrls) ? cityJsonUrls : [cityJsonUrls];
-  const url = new URL("../", window.location.href);
+  const url = new URL(CJLOUPE_URL);
   url.search = "";
   url.hash = "";
   for (const cityJsonUrl of urls) {
@@ -1076,21 +1038,29 @@ function fcbTooltipLines(item) {
   ];
 }
 
-fileInput.addEventListener("change", () => {
-  const file = fileInput.files?.[0];
-  if (!file) {
-    return;
-  }
-  loadSource(new FileSource(file)).catch(showError);
-});
-
-loadUrlButton.addEventListener("click", () => {
-  const url = urlInput.value.trim();
-  if (!url) {
+function loadUrlValue(url) {
+  const trimmed = url.trim();
+  if (!trimmed) {
     setStatus("Enter a URL first.");
     return;
   }
-  loadSource(new UrlSource(url)).catch(showError);
+  urlInput.value = trimmed;
+  loadSource(new UrlSource(trimmed)).catch(showError);
+}
+
+function initialSourceUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("url") || params.get("index") || params.get("source");
+}
+
+loadUrlButton.addEventListener("click", () => {
+  loadUrlValue(urlInput.value);
+});
+
+urlInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    loadUrlValue(urlInput.value);
+  }
 });
 
 thresholdInput.addEventListener("input", () => syncThreshold(thresholdInput.value));
@@ -1103,12 +1073,9 @@ clearButton.addEventListener("click", () => {
     return;
   }
   app.selected.clear();
-  clearExportOutputs();
   updateSelectionStats();
   cellsLayer.changed();
 });
-
-exportButton.addEventListener("click", () => buildCjLoupeUrlOutput().catch(showError));
 
 openCjLoupeButton.addEventListener("click", async () => {
   const url = await getSelectedCjLoupeUrl().catch((error) => {
@@ -1122,11 +1089,6 @@ openCjLoupeButton.addEventListener("click", async () => {
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
-});
-
-copyCjLoupeUrlButton.addEventListener("click", async () => {
-  await navigator.clipboard.writeText(cjLoupeUrlOutput.value);
-  setStatus("Copied CJLoupe URL.");
 });
 
 map.on("pointermove", (event) => {
@@ -1174,7 +1136,6 @@ map.on("singleclick", (event) => {
   } else {
     app.selected.set(item.key, item);
   }
-  clearExportOutputs();
   updateSelectionStats();
   cellsLayer.changed();
 });
@@ -1188,5 +1149,10 @@ projectionSelect.addEventListener("change", () => {
   fitToExtent();
   setStatus(`Using ${app.sourceProjection}.`);
 });
+
+const sourceUrl = initialSourceUrl();
+if (sourceUrl) {
+  loadUrlValue(sourceUrl);
+}
 
 map.updateSize();

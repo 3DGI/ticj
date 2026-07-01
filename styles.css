@@ -16,8 +16,7 @@ body {
 }
 
 button,
-input,
-textarea {
+input {
   font: inherit;
 }
 
@@ -41,8 +40,7 @@ button:disabled {
 
 input[type="url"],
 input[type="number"],
-select,
-textarea {
+select {
   width: 100%;
   border: 1px solid #a6afa7;
   border-radius: 6px;
@@ -60,6 +58,10 @@ select {
 input[type="range"] {
   width: 100%;
   accent-color: #28666e;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .app {
@@ -146,25 +148,6 @@ input[type="range"] {
 .stats dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
-}
-
-.export textarea {
-  min-height: 180px;
-  resize: vertical;
-  padding: 10px;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.export .fieldline button {
-  flex: 0 0 84px;
-}
-
-.export .encoded-output {
-  min-height: 74px;
-  word-break: break-all;
 }
 
 .status {

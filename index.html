@@ -15,17 +15,14 @@
         </header>
 
         <section class="group">
-          <label class="label" for="fileInput">Local FCB or FGB tile index</label>
-          <input id="fileInput" type="file" accept=".fcb,.fgb,.flatgeobuf,application/octet-stream">
-
-          <label class="label" for="urlInput">Remote FCB or FGB tile index URL</label>
+          <label class="label" for="urlInput">FCB or FGB tile index URL</label>
           <div class="row">
-            <input id="urlInput" type="url" placeholder="https://example.com/data.fcb">
+            <input id="urlInput" type="url" placeholder="https://example.com/tile_index.fgb">
             <button id="loadUrlButton" type="button">Load</button>
           </div>
         </section>
 
-        <section class="group">
+        <section class="group" data-source-mode="fcb" hidden>
           <div class="fieldline">
             <label class="label" for="thresholdInput">Split threshold</label>
             <output id="thresholdValue">256</output>
@@ -52,22 +49,14 @@
         <section class="group stats">
           <dl>
             <div><dt>Features</dt><dd id="featureCount">-</dd></div>
-            <div><dt>Node size</dt><dd id="nodeSize">-</dd></div>
-            <div><dt>Levels</dt><dd id="levelCount">-</dd></div>
+            <div data-source-mode="fcb" hidden><dt>Node size</dt><dd id="nodeSize">-</dd></div>
+            <div data-source-mode="fcb" hidden><dt>Levels</dt><dd id="levelCount">-</dd></div>
             <div><dt>Visible cells</dt><dd id="visibleCount">-</dd></div>
             <div><dt>Selected features</dt><dd id="selectedCount">0</dd></div>
           </dl>
         </section>
 
-        <section class="group export">
-          <div class="actions">
-            <button id="exportButton" type="button" disabled>Build CJLoupe URL</button>
-            <button id="copyCjLoupeUrlButton" type="button" disabled>Copy</button>
-          </div>
-          <textarea id="cjLoupeUrlOutput" class="encoded-output" spellcheck="false" readonly placeholder="CJLoupe URL appears here"></textarea>
-        </section>
-
-        <p id="status" class="status">Choose a file or load a URL.</p>
+        <p id="status" class="status">Load a URL.</p>
       </aside>
 
       <section class="mapwrap">

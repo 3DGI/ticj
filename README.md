@@ -33,7 +33,13 @@ nix run .#dev
 nix run .#build
 ```
 
-You can load local files or remote URLs. Remote FCB files must support CORS and HTTP Range requests. Remote FGB tile indexes must support CORS.
+You can load remote FCB or FGB tile index URLs. Remote FCB files must support CORS and HTTP Range requests. Remote FGB tile indexes must support CORS.
+
+To load an index on startup, pass it as a URL parameter:
+
+```text
+https://example.com/ticj/?index=https%3A%2F%2Fexample.com%2Ftile_index.fgb
+```
 
 ## Build a CityJSONL tile index
 
