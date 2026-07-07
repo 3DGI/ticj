@@ -37,7 +37,7 @@ Options:
   --pattern <glob>       Glob pattern to index (default: ${DEFAULT_PATTERN})
   --non-recursive        Only scan files directly inside input_dir
   --relative-to <dir>    Base directory for stored file paths (default: input_dir)
-  --no-overwrite         Do not replace an existing index output file
+  --reindex, --overwrite Replace an existing index output file
   -h, --help             Show this help
 `);
 }
@@ -48,7 +48,7 @@ function parseArgs(argv) {
     port: DEFAULT_PORT,
     pattern: DEFAULT_PATTERN,
     recursive: true,
-    overwrite: true,
+    overwrite: false,
     positionals: [],
   };
 
@@ -88,6 +88,7 @@ function parseArgs(argv) {
         if (!argv[i]) throw new Error("--relative-to requires a value");
         args.relativeTo = argv[i];
         break;
+      case "--reindex":
       case "--overwrite":
         args.overwrite = true;
         break;
@@ -149,6 +150,15 @@ function contentType(filePath) {
   return MIME_TYPES.get(path.extname(filePath).toLowerCase()) ?? "application/octet-stream";
 }
 
+function corsHeaders() {
+  return {
+    "access-control-allow-headers": "Range, Content-Type",
+    "access-control-allow-methods": "GET, HEAD, OPTIONS",
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Accept-Ranges, Content-Length, Content-Range",
+  };
+}
+
 function parseRange(rangeHeader, size) {
   const match = /^bytes=(\d*)-(\d*)$/u.exec(rangeHeader ?? "");
   if (!match) return null;
@@ -198,6 +208,7 @@ async function serveFile(request, response, filePath) {
     "accept-ranges": "bytes",
     "cache-control": "no-cache",
     "content-type": contentType(filePath),
+    ...corsHeaders(),
   };
 
   const range = parseRange(request.headers.range, stats.size);
@@ -207,6 +218,10 @@ async function serveFile(request, response, filePath) {
       "content-length": String(range.end - range.start + 1),
       "content-range": `bytes ${range.start}-${range.end}/${stats.size}`,
     });
+    if (request.method === "HEAD") {
+      response.end();
+      return;
+    }
     createReadStream(filePath, range).pipe(response);
     return;
   }
@@ -215,6 +230,10 @@ async function serveFile(request, response, filePath) {
     ...headers,
     "content-length": String(stats.size),
   });
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
   createReadStream(filePath).pipe(response);
 }
 
@@ -222,8 +241,14 @@ function createTicjServer({ distDir, dataRoot, indexUrl }) {
   return createServer((request, response) => {
     const requestUrl = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
 
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, corsHeaders());
+      response.end();
+      return;
+    }
+
     if (request.method !== "GET" && request.method !== "HEAD") {
-      response.writeHead(405, { "content-type": "text/plain; charset=utf-8" });
+      response.writeHead(405, { "content-type": "text/plain; charset=utf-8", ...corsHeaders() });
       response.end("method not allowed\n");
       return;
     }
@@ -231,6 +256,7 @@ function createTicjServer({ distDir, dataRoot, indexUrl }) {
     if (requestUrl.pathname === "/" && requestUrl.search === "") {
       response.writeHead(302, {
         location: `/?index=${encodeURIComponent(indexUrl)}`,
+        ...corsHeaders(),
       });
       response.end();
       return;
@@ -241,7 +267,7 @@ function createTicjServer({ distDir, dataRoot, indexUrl }) {
       : safeResolve(distDir, requestUrl.pathname);
 
     if (!filePath) {
-      response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      response.writeHead(403, { "content-type": "text/plain; charset=utf-8", ...corsHeaders() });
       response.end("forbidden\n");
       return;
     }
@@ -249,7 +275,7 @@ function createTicjServer({ distDir, dataRoot, indexUrl }) {
     serveFile(request, response, filePath).catch((error) => {
       console.error(`server error: ${error.message}`);
       if (!response.headersSent) {
-        response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        response.writeHead(500, { "content-type": "text/plain; charset=utf-8", ...corsHeaders() });
       }
       response.end("internal server error\n");
     });
@@ -282,15 +308,34 @@ async function main() {
     return 2;
   }
 
+  let existingOutputStats = null;
   try {
-    await buildTileIndex({
-      inputDir,
-      output,
-      pattern: args.pattern,
-      recursive: args.recursive,
-      relativeTo,
-      overwrite: args.overwrite,
-    });
+    existingOutputStats = await stat(output);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error(`error: ${error.message}`);
+      return 1;
+    }
+  }
+
+  if (existingOutputStats && !existingOutputStats.isFile()) {
+    console.error(`error: index output exists but is not a file: ${output}`);
+    return 2;
+  }
+
+  try {
+    if (existingOutputStats && !args.overwrite) {
+      console.log(`using existing index -> ${output}`);
+    } else {
+      await buildTileIndex({
+        inputDir,
+        output,
+        pattern: args.pattern,
+        recursive: args.recursive,
+        relativeTo,
+        overwrite: args.overwrite,
+      });
+    }
   } catch (error) {
     console.error(`error: ${error.message}`);
     return error.exitCode ?? 1;

@@ -81,8 +81,8 @@ const map = new OlMap({
 
 class UrlSource {
   constructor(url) {
-    this.url = url;
-    this.label = url;
+    this.url = new URL(url, window.location.href).href;
+    this.label = this.url;
     this.size = null;
   }
 
@@ -1044,8 +1044,15 @@ function loadUrlValue(url) {
     setStatus("Enter a URL first.");
     return;
   }
-  urlInput.value = trimmed;
-  loadSource(new UrlSource(trimmed)).catch(showError);
+  let source;
+  try {
+    source = new UrlSource(trimmed);
+  } catch {
+    setStatus(`Invalid URL: ${trimmed}`);
+    return;
+  }
+  urlInput.value = source.url;
+  loadSource(source).catch(showError);
 }
 
 function initialSourceUrl() {
