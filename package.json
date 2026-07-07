@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "index:tiles": "node index_cityjsonl_tiles.js",
+    "serve:ticj": "node serve_ticj.js",
     "build": "vite build",
     "preview": "vite preview"
   },

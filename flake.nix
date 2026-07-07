@@ -12,8 +12,37 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
+        ticj = pkgs.buildNpmPackage {
+          pname = "ticj";
+          version = "0.1.0";
+          src = ./.;
+
+          npmDepsFetcherVersion = 2;
+          npmDepsHash = "sha256-A9xR+d20ewY5SbK4v/d3sJh2sqCbLMKIOg+5hZNHsbQ=";
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+
+          installPhase = ''
+            runHook preInstall
+
+            mkdir -p $out/lib/ticj $out/bin
+            cp index_cityjsonl_tiles.js serve_ticj.js package.json $out/lib/ticj/
+            cp -R dist $out/lib/ticj/dist
+            cp -R node_modules $out/lib/ticj/node_modules
+            makeWrapper ${pkgs.nodejs}/bin/node $out/bin/ticj \
+              --add-flags $out/lib/ticj/serve_ticj.js
+            makeWrapper ${pkgs.nodejs}/bin/node $out/bin/ticj-index-tiles \
+              --add-flags $out/lib/ticj/index_cityjsonl_tiles.js
+
+            runHook postInstall
+          '';
+        };
       in
       {
+        packages = {
+          default = ticj;
+          index = ticj;
+        };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             bun
@@ -22,14 +51,17 @@
         };
 
         apps = rec {
-          default = index;
+          default = serve;
+
+          serve = {
+            type = "app";
+            program = "${ticj}/bin/ticj";
+            meta.description = "Build a CityJSONL tile index and serve TICJ";
+          };
 
           index = {
             type = "app";
-            program = "${pkgs.writeShellScript "ticj-index-tiles" ''
-              set -euo pipefail
-              exec ${pkgs.nodejs}/bin/node index_cityjsonl_tiles.js "$@"
-            ''}";
+            program = "${ticj}/bin/ticj-index-tiles";
             meta.description = "Build a FlatGeobuf tile index from CityJSONL tiles";
           };
 

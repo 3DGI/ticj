@@ -10,9 +10,10 @@ import {
 import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { serialize as serializeFlatGeobuf } from "flatgeobuf/lib/mjs/geojson.js";
 
-const DEFAULT_PATTERN = "*.city.jsonl";
+export const DEFAULT_PATTERN = "*.city.jsonl";
 
 function printUsage() {
   console.error(`Usage: node index_cityjsonl_tiles.js [options] <input_dir> <output>
@@ -345,6 +346,100 @@ function epsgToCode(epsg) {
   return match ? Number(match[1]) : 0;
 }
 
+export async function buildTileIndex({
+  inputDir,
+  output,
+  pattern = DEFAULT_PATTERN,
+  recursive = true,
+  relativeTo = inputDir,
+  layerName = "cityjsonl_tiles",
+  overwrite = false,
+  logger = console,
+}) {
+  const resolvedInputDir = path.resolve(inputDir);
+  const resolvedOutput = path.resolve(output);
+  const resolvedRelativeTo = path.resolve(relativeTo);
+
+  try {
+    await assertDirectory(resolvedInputDir, "input_dir");
+    await assertDirectory(resolvedRelativeTo, "--relative-to");
+  } catch (error) {
+    error.exitCode = 2;
+    throw error;
+  }
+
+  if ((await exists(resolvedOutput)) && !overwrite) {
+    const error = new Error(`output already exists: ${resolvedOutput} (pass --overwrite to replace it)`);
+    error.exitCode = 2;
+    throw error;
+  }
+
+  if (layerName !== "cityjsonl_tiles") {
+    logger.error(
+      "warning: --layer-name is ignored; the JS FlatGeobuf serializer uses its default layer name",
+    );
+  }
+
+  const paths = await cityjsonlPaths(resolvedInputDir, pattern, recursive);
+  if (paths.length === 0) {
+    const error = new Error(`no files matched ${JSON.stringify(pattern)} under ${resolvedInputDir}`);
+    error.exitCode = 2;
+    throw error;
+  }
+
+  const features = [];
+  let skippedEmpty = 0;
+  let skippedOutsideRelativeBase = 0;
+  const epsgValues = new Set();
+
+  for (const filePath of paths) {
+    const { bounds, epsg, featureCount } = await scanTile(filePath);
+    if (epsg) epsgValues.add(epsg);
+    if (bounds === null) {
+      skippedEmpty += 1;
+      continue;
+    }
+    if (!isInsideOrEqual(filePath, resolvedRelativeTo)) {
+      skippedOutsideRelativeBase += 1;
+      continue;
+    }
+    features.push(geojsonFeature(filePath, resolvedRelativeTo, bounds, featureCount));
+  }
+
+  if (features.length === 0) {
+    const error = new Error("no tiles with vertices were found");
+    error.exitCode = 1;
+    throw error;
+  }
+
+  const sortedEpsgValues = [...epsgValues].sort();
+  const epsg = sortedEpsgValues[0] ?? null;
+  if (sortedEpsgValues.length > 1) {
+    logger.error(
+      `warning: multiple CRS values found; assigning ${epsg} to the output: ${sortedEpsgValues.join(", ")}`,
+    );
+  }
+  if (skippedEmpty) {
+    logger.error(`warning: skipped ${skippedEmpty} tile(s) with no vertices`);
+  }
+  if (skippedOutsideRelativeBase) {
+    logger.error(
+      `warning: skipped ${skippedOutsideRelativeBase} tile(s) outside --relative-to`,
+    );
+  }
+
+  await mkdir(path.dirname(resolvedOutput), { recursive: true });
+  const featureCollection = {
+    type: "FeatureCollection",
+    features,
+  };
+  const bytes = serializeFlatGeobuf(featureCollection, epsgToCode(epsg));
+  await writeFile(resolvedOutput, bytes, { flag: overwrite ? "w" : "wx" });
+
+  logger.log(`indexed ${features.length} tile(s) -> ${resolvedOutput}`);
+  return { output: resolvedOutput, tileCount: features.length };
+}
+
 async function main() {
   let args;
   try {
@@ -361,92 +456,31 @@ async function main() {
   }
 
   const [inputArg, outputArg] = args.positionals;
-  const inputDir = path.resolve(inputArg);
-  const output = path.resolve(outputArg);
-  const relativeTo = path.resolve(args.relativeTo ?? inputArg);
 
   try {
-    await assertDirectory(inputDir, "input_dir");
-    await assertDirectory(relativeTo, "--relative-to");
+    await buildTileIndex({
+      inputDir: inputArg,
+      output: outputArg,
+      pattern: args.pattern,
+      recursive: args.recursive,
+      relativeTo: args.relativeTo ?? inputArg,
+      layerName: args.layerName,
+      overwrite: args.overwrite,
+    });
+    return 0;
   } catch (error) {
     console.error(`error: ${error.message}`);
-    return 2;
+    return error.exitCode ?? 1;
   }
-
-  if ((await exists(output)) && !args.overwrite) {
-    console.error(`error: output already exists: ${output} (pass --overwrite to replace it)`);
-    return 2;
-  }
-
-  if (args.layerName !== "cityjsonl_tiles") {
-    console.error(
-      "warning: --layer-name is ignored; the JS FlatGeobuf serializer uses its default layer name",
-    );
-  }
-
-  const paths = await cityjsonlPaths(inputDir, args.pattern, args.recursive);
-  if (paths.length === 0) {
-    console.error(`error: no files matched ${JSON.stringify(args.pattern)} under ${inputDir}`);
-    return 2;
-  }
-
-  const features = [];
-  let skippedEmpty = 0;
-  let skippedOutsideRelativeBase = 0;
-  const epsgValues = new Set();
-
-  for (const filePath of paths) {
-    const { bounds, epsg, featureCount } = await scanTile(filePath);
-    if (epsg) epsgValues.add(epsg);
-    if (bounds === null) {
-      skippedEmpty += 1;
-      continue;
-    }
-    if (!isInsideOrEqual(filePath, relativeTo)) {
-      skippedOutsideRelativeBase += 1;
-      continue;
-    }
-    features.push(geojsonFeature(filePath, relativeTo, bounds, featureCount));
-  }
-
-  if (features.length === 0) {
-    console.error("error: no tiles with vertices were found");
-    return 1;
-  }
-
-  const sortedEpsgValues = [...epsgValues].sort();
-  const epsg = sortedEpsgValues[0] ?? null;
-  if (sortedEpsgValues.length > 1) {
-    console.error(
-      `warning: multiple CRS values found; assigning ${epsg} to the output: ${sortedEpsgValues.join(", ")}`,
-    );
-  }
-  if (skippedEmpty) {
-    console.error(`warning: skipped ${skippedEmpty} tile(s) with no vertices`);
-  }
-  if (skippedOutsideRelativeBase) {
-    console.error(
-      `warning: skipped ${skippedOutsideRelativeBase} tile(s) outside --relative-to`,
-    );
-  }
-
-  await mkdir(path.dirname(output), { recursive: true });
-  const featureCollection = {
-    type: "FeatureCollection",
-    features,
-  };
-  const bytes = serializeFlatGeobuf(featureCollection, epsgToCode(epsg));
-  await writeFile(output, bytes, { flag: args.overwrite ? "w" : "wx" });
-
-  console.log(`indexed ${features.length} tile(s) -> ${output}`);
-  return 0;
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error) => {
-    console.error(`error: ${error.message}`);
-    process.exitCode = 1;
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      console.error(`error: ${error.message}`);
+      process.exitCode = 1;
+    });
+}
