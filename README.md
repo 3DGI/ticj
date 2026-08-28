@@ -53,4 +53,20 @@ With Nix:
 nix run . -- ./seq ./tile_index.fgb --overwrite
 ```
 
+From the remote repository, build only the tile index with:
+
+```sh
+nix run github:3dgi/ticj#index -- ./seq ./tile_index.fgb --overwrite
+```
+
+To build (or reuse) `./seq/tile_index.fgb` and launch TICJ for that directory:
+
+```sh
+nix run github:3dgi/ticj -- ./seq --reindex
+```
+
+The indexer uses the trailing numeric `x-y-z` portion of each tile filename as
+`tile_id`; for example, `reconstruction-2-48-16.city.jsonl` is indexed as
+`2-48-16`.
+
 The indexer is a Node.js script that uses the existing `flatgeobuf` package, so it does not require GDAL/OGR.

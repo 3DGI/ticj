@@ -199,12 +199,19 @@ async function cityjsonlPaths(inputDir, pattern, recursive) {
 
 function tileIdFromPath(filePath) {
   const name = path.basename(filePath);
+  let stem;
   for (const suffix of [".city.jsonl", ".jsonl", ".json"]) {
     if (name.endsWith(suffix)) {
-      return name.slice(0, -suffix.length);
+      stem = name.slice(0, -suffix.length);
+      break;
     }
   }
-  return path.parse(name).name;
+  stem ??= path.parse(name).name;
+
+  // Tile filenames commonly end in a coordinate triplet, for example
+  // reconstruction-2-48-16.city.jsonl. Store that triplet as the tile ID.
+  const match = stem.match(/(\d+-\d+-\d+)$/);
+  return match ? match[1] : stem;
 }
 
 function parseEpsg(referenceSystem) {
