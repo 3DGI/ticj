@@ -5,9 +5,16 @@
 It supports two source types:
 
 - FlatCityBuf `.fcb` files: reads the header and packed R-tree leaf nodes, renders a quadtree overlay, and builds CJLoupe URLs with compact feature byte ranges.
-- FlatGeobuf `.fgb` tile indexes: reads tile polygons with `tile_id`, `filepath`, bounds, and `feature_count`, then opens the selected tile filepath or selected tile filepaths in CJLoupe.
+- FlatGeobuf `.fgb` tile indexes: reads tile polygons with `tile_id` and either `filepath` or `cj_download`, then opens the selected tile URLs in CJLoupe. Bounds can come from `minx`, `miny`, `maxx`, `maxy` properties or the polygon geometry. If `feature_count` is absent, the statistics show tile counts.
 
 For remote FlatGeobuf indexes, relative `filepath` values are resolved against the parent URL of the `.fgb` file.
+Relative `cj_download` values are resolved the same way; `filepath` takes precedence when both are present.
+
+For example, load the 3DBAG index by pasting this URL into the URL field:
+
+```text
+https://3dbag.fsn1.your-objectstorage.com/v20250903/tile_index.fgb
+```
 
 ## Usage
 

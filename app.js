@@ -13,6 +13,7 @@ import { register } from "ol/proj/proj4.js";
 import { get as getProjection, transform } from "ol/proj.js";
 import { deserialize as deserializeFlatGeobuf } from "flatgeobuf/lib/mjs/geojson.js";
 import proj4 from "proj4";
+import { FGB_TILE_INDEX_SOURCE_KIND, tileIndexFeatureToItem, validExtent } from "./tile-index.js";
 
 const MAGIC = [0x66, 0x63, 0x62, 0x01, 0x66, 0x63, 0x62, 0x00];
 const FGB_MAGIC = [0x66, 0x67, 0x62, 0x03, 0x66, 0x67, 0x62, 0x00];
@@ -23,7 +24,6 @@ const HEADER_SIZE_LIMIT = 512 * 1024 * 1024;
 const MAP_PROJECTION = "EPSG:3857";
 const RD_NEW_PROJECTION = "EPSG:28992";
 const FCB_SOURCE_KIND = "fcb";
-const FGB_TILE_INDEX_SOURCE_KIND = "fgb-tile-index";
 
 proj4.defs(
   RD_NEW_PROJECTION,
@@ -328,6 +328,7 @@ async function loadFlatGeobufTileIndexSource(source) {
     threshold: Number(thresholdNumber.value),
     visible: tiles,
     tiles,
+    countTiles: tiles.some((tile) => tile.count === null),
     selected: new globalThis.Map(),
     extent,
     leafIndex: null,
@@ -404,92 +405,6 @@ function readAttributeIndexSize(bytes, fieldPosition) {
   return total;
 }
 
-function tileIndexFeatureToItem(feature, index, sourceUrl) {
-  const properties = feature?.properties ?? {};
-  const filepath = typeof properties.filepath === "string" ? properties.filepath : "";
-  if (!filepath) {
-    return null;
-  }
-
-  const bounds = boundsFromTileProperties(properties) ?? boundsFromGeometry(feature.geometry);
-  if (!validExtent(bounds)) {
-    return null;
-  }
-
-  const featureCount = Number(properties.feature_count);
-  const tileId = typeof properties.tile_id === "string" && properties.tile_id
-    ? properties.tile_id
-    : filepath;
-  return {
-    kind: FGB_TILE_INDEX_SOURCE_KIND,
-    key: `tile:${index}:${tileId}`,
-    bounds,
-    depth: 0,
-    count: Number.isFinite(featureCount) && featureCount >= 0 ? featureCount : 1,
-    firstFeature: index,
-    tileId,
-    filepath,
-    tileUrl: resolveTileUrl(filepath, sourceUrl),
-  };
-}
-
-function resolveTileUrl(filepath, sourceUrl) {
-  try {
-    if (sourceUrl) {
-      return new URL(filepath, sourceUrl).href;
-    }
-
-    const url = new URL(filepath);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch {
-    return null;
-  }
-}
-
-function boundsFromTileProperties(properties) {
-  const bounds = [
-    Number(properties.minx),
-    Number(properties.miny),
-    Number(properties.maxx),
-    Number(properties.maxy),
-  ];
-  return validExtent(bounds) ? bounds : null;
-}
-
-function boundsFromGeometry(geometry) {
-  const points = [];
-  collectGeometryPoints(geometry?.coordinates, points);
-  if (points.length === 0) {
-    return null;
-  }
-
-  const xs = points.map(([x]) => x).filter(Number.isFinite);
-  const ys = points.map(([, y]) => y).filter(Number.isFinite);
-  if (xs.length === 0 || ys.length === 0) {
-    return null;
-  }
-
-  return [
-    Math.min(...xs),
-    Math.min(...ys),
-    Math.max(...xs),
-    Math.max(...ys),
-  ];
-}
-
-function collectGeometryPoints(value, points) {
-  if (!Array.isArray(value)) {
-    return;
-  }
-  if (typeof value[0] === "number" && typeof value[1] === "number") {
-    points.push([value[0], value[1]]);
-    return;
-  }
-  for (const child of value) {
-    collectGeometryPoints(child, points);
-  }
-}
-
 function extentFromItems(items) {
   return items.reduce((extent, item) => {
     if (!extent) {
@@ -562,7 +477,9 @@ function cellStyle(feature) {
   const item = feature.get("item");
   const selected = app?.selected.has(item.key) ?? false;
   const hovered = hoveredKey === item.key;
-  const showLabel = item.count > 0 && (selected || hovered || item.depth <= 7);
+  const label = item.count === null
+    ? (selected || hovered ? item.tileId : "")
+    : item.count > 0 && (selected || hovered || item.depth <= 7) ? formatCompact(item.count) : "";
 
   return new Style({
     fill: new Fill({
@@ -572,9 +489,9 @@ function cellStyle(feature) {
       color: selected ? "#0b525b" : hovered ? "#8a4f23" : "#55705c",
       width: selected || hovered ? 2 : 1,
     }),
-    text: showLabel
+    text: label
       ? new Text({
-          text: formatCompact(item.count),
+          text: label,
           font: "12px Inter, sans-serif",
           fill: new Fill({ color: selected ? "#0b525b" : "#24332b" }),
           stroke: new Stroke({ color: "rgba(255,255,255,0.82)", width: 3 }),
@@ -645,8 +562,10 @@ function updateHeaderStats() {
   if (!app) {
     return;
   }
+  document.querySelector("#featureCountLabel").textContent = app.countTiles ? "Tiles" : "Features";
+  document.querySelector("#selectedCountLabel").textContent = app.countTiles ? "Selected tiles" : "Selected features";
   if (app.mode === FGB_TILE_INDEX_SOURCE_KIND) {
-    const totalFeatureCount = app.tiles.reduce((sum, item) => sum + item.count, 0);
+    const totalFeatureCount = app.countTiles ? app.tiles.length : app.tiles.reduce((sum, item) => sum + item.count, 0);
     featureCountEl.textContent = totalFeatureCount.toLocaleString();
     nodeSizeEl.textContent = "-";
     levelCountEl.textContent = "-";
@@ -668,7 +587,7 @@ function updateSelectionStats() {
   for (const item of app.selected.values()) {
     count += item.count;
   }
-  selectedCountEl.textContent = count.toLocaleString();
+  selectedCountEl.textContent = (app.countTiles ? app.selected.size : count).toLocaleString();
   clearButton.disabled = app.selected.size === 0;
   openCjLoupeButton.disabled = !canOpenSelectedCjLoupeUrl();
 }
@@ -1002,16 +921,6 @@ function formatCompact(value) {
   return new Intl.NumberFormat("en", { notation: "compact" }).format(value);
 }
 
-function validExtent(extent) {
-  return (
-    Array.isArray(extent) &&
-    extent.length === 4 &&
-    extent.every(Number.isFinite) &&
-    extent[2] > extent[0] &&
-    extent[3] > extent[1]
-  );
-}
-
 function matchesMagic(bytes, magic) {
   return magic.every((value, index) => bytes[index] === value);
 }
@@ -1110,7 +1019,7 @@ map.on("pointermove", (event) => {
       ? [
           `tile ${item.tileId}`,
           item.filepath,
-          `${item.count.toLocaleString()} features`,
+          item.count === null ? "Feature count unavailable" : `${item.count.toLocaleString()} features`,
         ]
       : fcbTooltipLines(item);
     tooltip.hidden = false;

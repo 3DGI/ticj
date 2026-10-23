@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "dev": "vite --host 127.0.0.1",
     "index:tiles": "node index_cityjsonl_tiles.js",
     "serve:ticj": "node serve_ticj.js",
