@@ -150,6 +150,50 @@ input[type="range"] {
   font-variant-numeric: tabular-nums;
 }
 
+.tile-errors h2,
+.tile-errors p {
+  margin: 0;
+}
+
+.tile-errors summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.tile-errors details p {
+  margin: 6px 0;
+  color: #58645c;
+  font-size: 14px;
+}
+
+.tile-errors table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-errors caption,
+.tile-errors th,
+.tile-errors td {
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.tile-errors caption {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.tile-errors th,
+.tile-errors td {
+  border-top: 1px solid #d9ded4;
+}
+
+.tile-errors :is(th, td):last-child {
+  text-align: right;
+}
+
 .status {
   min-height: 40px;
   margin: auto 0 0;
@@ -184,6 +228,8 @@ input[type="range"] {
   color: #18201c;
   font-size: 12px;
   line-height: 1.35;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   pointer-events: none;
   box-shadow: 0 8px 24px rgba(23, 30, 26, 0.16);
 }

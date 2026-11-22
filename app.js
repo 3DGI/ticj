@@ -13,7 +13,7 @@ import { register } from "ol/proj/proj4.js";
 import { get as getProjection, transform } from "ol/proj.js";
 import { deserialize as deserializeFlatGeobuf } from "flatgeobuf/lib/mjs/geojson.js";
 import proj4 from "proj4";
-import { FGB_TILE_INDEX_SOURCE_KIND, tileIndexFeatureToItem, validExtent } from "./tile-index.js";
+import { aggregateTileErrors, FGB_TILE_INDEX_SOURCE_KIND, tileIndexFeatureToItem, validExtent } from "./tile-index.js";
 
 const MAGIC = [0x66, 0x63, 0x62, 0x01, 0x66, 0x63, 0x62, 0x00];
 const FGB_MAGIC = [0x66, 0x67, 0x62, 0x03, 0x66, 0x67, 0x62, 0x00];
@@ -54,6 +54,10 @@ const nodeSizeEl = document.querySelector("#nodeSize");
 const levelCountEl = document.querySelector("#levelCount");
 const visibleCountEl = document.querySelector("#visibleCount");
 const selectedCountEl = document.querySelector("#selectedCount");
+const tileErrorsEl = document.querySelector("#tileErrors");
+const tileErrorDetailsEl = document.querySelector("#tileErrorDetails");
+const allTileErrorSummaryEl = document.querySelector("#allTileErrorSummary");
+const allTileErrorDetailsEl = document.querySelector("#allTileErrorDetails");
 
 let app = null;
 let hoveredKey = null;
@@ -336,6 +340,7 @@ async function loadFlatGeobufTileIndexSource(source) {
   };
 
   setSourceModeUi(app.mode);
+  renderAllTileErrors(tiles);
   visibleCountEl.textContent = String(tiles.length);
   updateHeaderStats();
   updateProjectionControl();
@@ -596,6 +601,58 @@ function updateSelectionStats() {
   selectedCountEl.textContent = (app.countTiles ? app.selected.size : count).toLocaleString();
   clearButton.disabled = app.selected.size === 0;
   openCjLoupeButton.disabled = !canOpenSelectedCjLoupeUrl();
+  updateTileErrorDetails();
+}
+
+function updateTileErrorDetails() {
+  if (tileErrorsEl.hidden) return;
+  const tiles = selectedItems().filter((tile) => tile.errorCounts !== null);
+  tileErrorDetailsEl.hidden = tiles.length === 0;
+  tileErrorDetailsEl.replaceChildren(...tiles.map(renderTileErrorDetails));
+}
+
+function renderAllTileErrors(tiles) {
+  tileErrorsEl.hidden = !tiles.some((tile) => tile.errorCounts !== null);
+  if (tileErrorsEl.hidden) return;
+
+  const { errorCounts, total, tileCount } = aggregateTileErrors(tiles);
+  allTileErrorSummaryEl.textContent = tileCount === 0
+    ? "Error details unavailable"
+    : `${formatErrorTotal(total)} · Counts available for ${tileCount.toLocaleString()} of ${tiles.length.toLocaleString()} tiles`;
+  allTileErrorDetailsEl.replaceChildren();
+  if (errorCounts.length > 0) {
+    allTileErrorDetailsEl.append(renderErrorCountTable(errorCounts));
+  }
+}
+
+function renderTileErrorDetails(tile) {
+  if (tile.errorCounts.length === 0) {
+    const summary = document.createElement("p");
+    const message = tile.validity === true ? "No errors reported" : "Error details unavailable";
+    summary.textContent = `Tile ${tile.tileId} · ${message}`;
+    return summary;
+  }
+  return renderErrorCountTable(tile.errorCounts, `Tile ${tile.tileId}`);
+}
+
+function renderErrorCountTable(errorCounts, caption) {
+  const table = document.createElement("table");
+  if (caption) table.createCaption().textContent = caption;
+  const header = table.createTHead().insertRow();
+  for (const label of ["LoD", "Error code", "Count"]) {
+    const column = document.createElement("th");
+    column.scope = "col";
+    column.textContent = label;
+    header.append(column);
+  }
+  const body = table.createTBody();
+  for (const { lod, code, count } of errorCounts) {
+    const row = body.insertRow();
+    row.insertCell().textContent = lod ?? "Unspecified";
+    row.insertCell().textContent = String(code);
+    row.insertCell().textContent = count.toLocaleString();
+  }
+  return table;
 }
 
 function setButtons(enabled) {
@@ -607,6 +664,9 @@ function setButtons(enabled) {
 function setSourceModeUi(mode) {
   for (const element of fcbOnlyElements) {
     element.hidden = mode !== FCB_SOURCE_KIND;
+  }
+  if (mode !== FGB_TILE_INDEX_SOURCE_KIND) {
+    tileErrorsEl.hidden = true;
   }
 }
 
@@ -953,6 +1013,24 @@ function fcbTooltipLines(item) {
   ];
 }
 
+function tileTooltipLines(item) {
+  const lines = [
+    `tile ${item.tileId}`,
+    item.filepath,
+    item.count === null ? "Feature count unavailable" : `${item.count.toLocaleString()} features`,
+    item.validity === null ? "Val3dity verdict unavailable" : item.validity ? "Valid (val3dity)" : "Invalid (val3dity)",
+  ];
+  if (item.errorCounts?.length) {
+    const count = item.errorCounts.reduce((sum, entry) => sum + entry.count, 0);
+    lines.push(formatErrorTotal(count));
+  }
+  return lines;
+}
+
+function formatErrorTotal(count) {
+  return `${count.toLocaleString()} val3dity ${count === 1 ? "error" : "errors"}`;
+}
+
 function loadUrlValue(url) {
   const trimmed = url.trim();
   if (!trimmed) {
@@ -1022,21 +1100,16 @@ map.on("pointermove", (event) => {
   if (item) {
     const rect = mapEl.getBoundingClientRect();
     const detailLines = item.kind === FGB_TILE_INDEX_SOURCE_KIND
-      ? [
-          `tile ${item.tileId}`,
-          item.filepath,
-          item.count === null ? "Feature count unavailable" : `${item.count.toLocaleString()} features`,
-          item.validity === null ? "Val3dity verdict unavailable" : item.validity ? "Valid (val3dity)" : "Invalid (val3dity)",
-        ]
+      ? tileTooltipLines(item)
       : fcbTooltipLines(item);
     tooltip.hidden = false;
     tooltip.style.left = `${event.originalEvent.clientX - rect.left + 14}px`;
     tooltip.style.top = `${event.originalEvent.clientY - rect.top + 14}px`;
-    tooltip.innerHTML = [
+    tooltip.textContent = [
       ...detailLines,
       `${item.bounds[0].toFixed(3)}, ${item.bounds[1].toFixed(3)}`,
       `${item.bounds[2].toFixed(3)}, ${item.bounds[3].toFixed(3)}`,
-    ].join("<br>");
+    ].join("\n");
   } else {
     tooltip.hidden = true;
   }

@@ -80,6 +80,13 @@ The indexer reads the file-wide verdict from `+val3dity-report.validity` in the
 [val3dity extension](https://github.com/cityjson/extensions/tree/main/extensions/val3dity/0.3.0)
 and stores it as the Boolean `validity` tile attribute. The viewer colors valid
 tiles green and invalid tiles red. Tiles without a verdict use the default tile
-style. Rebuild an existing index with `--overwrite` to include the verdicts.
+style.
+
+The `error_counts` attribute contains counts grouped by LoD and error code.
+The indexer uses detailed diagnostics when available for a code and falls back
+to the report summary for other codes. Dataset errors and errors without a
+resolvable LoD appear under **Unspecified**. Select tiles to inspect their counts,
+or expand **All tiles** to see totals and coverage for the full index. Rebuild
+an existing index with `--overwrite` to include this data.
 
 The indexer is a Node.js script that uses the existing `flatgeobuf` package, so it does not require GDAL/OGR.

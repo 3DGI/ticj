@@ -18,6 +18,9 @@ export function tileIndexFeatureToItem(feature, index, sourceUrl) {
   const tileId = properties.tile_id != null && String(properties.tile_id).trim()
     ? String(properties.tile_id)
     : filepath;
+  const errorCounts = Array.isArray(properties.error_counts)
+    ? properties.error_counts.filter(isErrorCount)
+    : null;
   return {
     kind: FGB_TILE_INDEX_SOURCE_KIND,
     key: `tile:${index}:${tileId}`,
@@ -25,11 +28,43 @@ export function tileIndexFeatureToItem(feature, index, sourceUrl) {
     depth: 0,
     count: Number.isFinite(featureCount) && featureCount >= 0 ? featureCount : null,
     validity: typeof properties.validity === "boolean" ? properties.validity : null,
+    errorCounts,
     firstFeature: index,
     tileId,
     filepath,
     tileUrl: resolveTileUrl(filepath, sourceUrl),
   };
+}
+
+function isErrorCount(entry) {
+  return (entry?.lod === null || typeof entry?.lod === "string")
+    && Number.isSafeInteger(entry.code) && Number.isSafeInteger(entry.count) && entry.count > 0;
+}
+
+export function aggregateTileErrors(tiles) {
+  const counts = new Map();
+  let total = 0;
+  let tileCount = 0;
+  for (const tile of tiles) {
+    const { errorCounts, validity } = tile;
+    if (errorCounts === null || (errorCounts.length === 0 && validity !== true)) continue;
+    tileCount += 1;
+    for (const { lod, code, count } of errorCounts) {
+      const key = JSON.stringify([lod, code]);
+      const aggregate = counts.get(key) ?? { lod, code, count: 0 };
+      aggregate.count += count;
+      counts.set(key, aggregate);
+      total += count;
+    }
+  }
+
+  const errorCounts = [...counts.values()].sort((a, b) => {
+    if (a.lod === b.lod) return a.code - b.code;
+    if (a.lod === null) return 1;
+    if (b.lod === null) return -1;
+    return a.lod.localeCompare(b.lod, "en", { numeric: true });
+  });
+  return { errorCounts, total, tileCount };
 }
 
 function resolveTileUrl(filepath, sourceUrl) {

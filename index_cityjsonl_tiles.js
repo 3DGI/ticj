@@ -252,6 +252,77 @@ function updateBounds(bounds, vertices, scale, translate) {
   return [minx, miny, maxx, maxy];
 }
 
+function geometryLod(geometry, templates) {
+  const lod = geometry?.lod ?? (geometry?.type === "GeometryInstance"
+    ? templates?.[geometry.template]?.lod
+    : undefined);
+  if (typeof lod === "string") return lod.trim() || null;
+  return Number.isFinite(lod) ? String(lod) : null;
+}
+
+function featureErrorLod(sourceId, cityObjects, templates) {
+  if (typeof sourceId !== "string") return null;
+  let sharedLod = null;
+  for (const reference of sourceId.split("&&")) {
+    const match = /^coid=(.+?)\|geom=(\d+)(?:\||$)/.exec(reference);
+    if (!match) return null;
+    const lod = geometryLod(cityObjects[match[1]]?.geometry?.[match[2]], templates);
+    if (lod === null || (sharedLod !== null && lod !== sharedLod)) return null;
+    sharedLod = lod;
+  }
+  return sharedLod;
+}
+
+function addCodeCount(counts, code, count) {
+  if (Number.isSafeInteger(code) && Number.isSafeInteger(count) && count > 0) {
+    counts.set(code, (counts.get(code) ?? 0) + count);
+  }
+}
+
+function collectCityObjectErrors(cityObjects, templates, countsByLod) {
+  function addError(lod, code) {
+    if (!countsByLod.has(lod)) countsByLod.set(lod, new Map());
+    addCodeCount(countsByLod.get(lod), code, 1);
+  }
+
+  for (const cityObject of Object.values(cityObjects)) {
+    const validation = cityObject?.attributes?.["+val3dity-validation"];
+    if (Array.isArray(validation?.geometries)) {
+      for (const entry of validation.geometries) {
+        if (!Array.isArray(entry?.errors)) continue;
+        const lod = geometryLod(cityObject.geometry?.[entry.geometryIndex], templates);
+        for (const error of entry.errors) addError(lod, error?.code);
+      }
+    }
+    if (Array.isArray(validation?.features)) {
+      for (const error of validation.features) {
+        addError(featureErrorLod(error?.sourceId, cityObjects, templates), error?.code);
+      }
+    }
+  }
+}
+
+function summarizeErrorCounts(countsByLod, summaryCounts, datasetCounts) {
+  const unattributedCounts = countsByLod.get(null) ?? new Map();
+  // The root summary also includes detailed errors. Use it for codes whose
+  // detailed entries are unavailable.
+  const detailedCounts = [...countsByLod.values()];
+  for (const [code, count] of summaryCounts) {
+    if (!detailedCounts.some((counts) => counts.has(code))) {
+      addCodeCount(unattributedCounts, code, count);
+    }
+  }
+  for (const [code, count] of datasetCounts) addCodeCount(unattributedCounts, code, count);
+
+  const lods = [...countsByLod.keys()]
+    .filter((lod) => lod !== null)
+    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  countsByLod.set(null, unattributedCounts);
+  return [...lods, null].flatMap((lod) => [...countsByLod.get(lod)]
+    .sort(([a], [b]) => a - b)
+    .map(([code, count]) => ({ lod, code, count })));
+}
+
 async function scanTile(filePath) {
   let bounds = null;
   let scale = [1, 1, 1];
@@ -260,6 +331,10 @@ async function scanTile(filePath) {
   let featureCount = 0;
   let validity = null;
   let lineNumber = 0;
+  let templates;
+  const countsByLod = new Map();
+  const summaryCounts = new Map();
+  const datasetCounts = new Map();
 
   const lines = createInterface({
     input: createReadStream(filePath, { encoding: "utf8" }),
@@ -278,9 +353,22 @@ async function scanTile(filePath) {
       throw new Error(`${filePath}:${lineNumber}: invalid JSON: ${error.message}`);
     }
 
-    const reportValidity = record["+val3dity-report"]?.validity;
-    if (typeof reportValidity === "boolean") {
-      validity = (validity ?? true) && reportValidity;
+    const report = record["+val3dity-report"];
+    if (typeof report?.validity === "boolean") {
+      validity = (validity ?? true) && report.validity;
+    }
+    if (Array.isArray(report?.error_code_summary)) {
+      for (const entry of report.error_code_summary) {
+        addCodeCount(summaryCounts, entry?.code, entry?.count);
+      }
+    }
+    if (Array.isArray(report?.dataset_errors)) {
+      for (const error of report.dataset_errors) addCodeCount(datasetCounts, error?.code, 1);
+    }
+    const recordTemplates = record["geometry-templates"]?.templates;
+    if (record.type === "CityJSON") templates = recordTemplates;
+    if (record.CityObjects) {
+      collectCityObjectErrors(record.CityObjects, recordTemplates ?? templates, countsByLod);
     }
 
     const transform = record.transform;
@@ -311,7 +399,8 @@ async function scanTile(filePath) {
     }
   }
 
-  return { bounds, epsg, featureCount, validity };
+  const errorCounts = summarizeErrorCounts(countsByLod, summaryCounts, datasetCounts);
+  return { bounds, epsg, featureCount, validity, errorCounts };
 }
 
 function polygonFromBounds(bounds) {
@@ -332,7 +421,7 @@ function isInsideOrEqual(filePath, basePath) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function geojsonFeature(filePath, relativeTo, bounds, featureCount, validity) {
+function geojsonFeature(filePath, relativeTo, { bounds, featureCount, validity, errorCounts }) {
   const relpath = path.relative(relativeTo, filePath).split(path.sep).join("/");
   const [minx, miny, maxx, maxy] = bounds;
   return {
@@ -346,6 +435,7 @@ function geojsonFeature(filePath, relativeTo, bounds, featureCount, validity) {
       maxy,
       feature_count: featureCount,
       validity,
+      error_counts: errorCounts,
     },
     geometry: {
       type: "Polygon",
@@ -407,7 +497,8 @@ export async function buildTileIndex({
   const epsgValues = new Set();
 
   for (const filePath of paths) {
-    const { bounds, epsg, featureCount, validity } = await scanTile(filePath);
+    const tile = await scanTile(filePath);
+    const { bounds, epsg } = tile;
     if (epsg) epsgValues.add(epsg);
     if (bounds === null) {
       skippedEmpty += 1;
@@ -417,7 +508,7 @@ export async function buildTileIndex({
       skippedOutsideRelativeBase += 1;
       continue;
     }
-    features.push(geojsonFeature(filePath, resolvedRelativeTo, bounds, featureCount, validity));
+    features.push(geojsonFeature(filePath, resolvedRelativeTo, tile));
   }
 
   if (features.length === 0) {
