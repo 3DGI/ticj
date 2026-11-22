@@ -76,4 +76,10 @@ The indexer uses the trailing numeric `x-y-z` portion of each tile filename as
 `tile_id`; for example, `reconstruction-2-48-16.city.jsonl` is indexed as
 `2-48-16`.
 
+The indexer reads the file-wide verdict from `+val3dity-report.validity` in the
+[val3dity extension](https://github.com/cityjson/extensions/tree/main/extensions/val3dity/0.3.0)
+and stores it as the Boolean `validity` tile attribute. The viewer colors valid
+tiles green and invalid tiles red. Tiles without a verdict use the default tile
+style. Rebuild an existing index with `--overwrite` to include the verdicts.
+
 The indexer is a Node.js script that uses the existing `flatgeobuf` package, so it does not require GDAL/OGR.

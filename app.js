@@ -480,13 +480,19 @@ function cellStyle(feature) {
   const label = item.count === null
     ? (selected || hovered ? item.tileId : "")
     : item.count > 0 && (selected || hovered || item.depth <= 7) ? formatCompact(item.count) : "";
+  const hasValidity = typeof item.validity === "boolean";
+  const validityRgb = item.validity ? "22, 115, 49" : "180, 38, 38";
+  const fillColor = hasValidity
+    ? `rgba(${validityRgb}, ${selected ? 0.44 : hovered ? 0.32 : 0.20})`
+    : selected ? "rgba(40, 102, 110, 0.26)" : "rgba(93, 125, 96, 0.10)";
+  const strokeColor = hasValidity
+    ? `rgb(${validityRgb})`
+    : selected ? "#0b525b" : hovered ? "#8a4f23" : "#55705c";
 
   return new Style({
-    fill: new Fill({
-      color: selected ? "rgba(40, 102, 110, 0.26)" : "rgba(93, 125, 96, 0.10)",
-    }),
+    fill: new Fill({ color: fillColor }),
     stroke: new Stroke({
-      color: selected ? "#0b525b" : hovered ? "#8a4f23" : "#55705c",
+      color: strokeColor,
       width: selected || hovered ? 2 : 1,
     }),
     text: label
@@ -1020,6 +1026,7 @@ map.on("pointermove", (event) => {
           `tile ${item.tileId}`,
           item.filepath,
           item.count === null ? "Feature count unavailable" : `${item.count.toLocaleString()} features`,
+          item.validity === null ? "Val3dity verdict unavailable" : item.validity ? "Valid (val3dity)" : "Invalid (val3dity)",
         ]
       : fcbTooltipLines(item);
     tooltip.hidden = false;

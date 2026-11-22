@@ -258,6 +258,7 @@ async function scanTile(filePath) {
   let translate = [0, 0, 0];
   let epsg = null;
   let featureCount = 0;
+  let validity = null;
   let lineNumber = 0;
 
   const lines = createInterface({
@@ -275,6 +276,11 @@ async function scanTile(filePath) {
       record = JSON.parse(trimmed);
     } catch (error) {
       throw new Error(`${filePath}:${lineNumber}: invalid JSON: ${error.message}`);
+    }
+
+    const reportValidity = record["+val3dity-report"]?.validity;
+    if (typeof reportValidity === "boolean") {
+      validity = (validity ?? true) && reportValidity;
     }
 
     const transform = record.transform;
@@ -305,7 +311,7 @@ async function scanTile(filePath) {
     }
   }
 
-  return { bounds, epsg, featureCount };
+  return { bounds, epsg, featureCount, validity };
 }
 
 function polygonFromBounds(bounds) {
@@ -326,7 +332,7 @@ function isInsideOrEqual(filePath, basePath) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function geojsonFeature(filePath, relativeTo, bounds, featureCount) {
+function geojsonFeature(filePath, relativeTo, bounds, featureCount, validity) {
   const relpath = path.relative(relativeTo, filePath).split(path.sep).join("/");
   const [minx, miny, maxx, maxy] = bounds;
   return {
@@ -339,6 +345,7 @@ function geojsonFeature(filePath, relativeTo, bounds, featureCount) {
       maxx,
       maxy,
       feature_count: featureCount,
+      validity,
     },
     geometry: {
       type: "Polygon",
@@ -400,7 +407,7 @@ export async function buildTileIndex({
   const epsgValues = new Set();
 
   for (const filePath of paths) {
-    const { bounds, epsg, featureCount } = await scanTile(filePath);
+    const { bounds, epsg, featureCount, validity } = await scanTile(filePath);
     if (epsg) epsgValues.add(epsg);
     if (bounds === null) {
       skippedEmpty += 1;
@@ -410,7 +417,7 @@ export async function buildTileIndex({
       skippedOutsideRelativeBase += 1;
       continue;
     }
-    features.push(geojsonFeature(filePath, resolvedRelativeTo, bounds, featureCount));
+    features.push(geojsonFeature(filePath, resolvedRelativeTo, bounds, featureCount, validity));
   }
 
   if (features.length === 0) {
@@ -433,6 +440,16 @@ export async function buildTileIndex({
     logger.error(
       `warning: skipped ${skippedOutsideRelativeBase} tile(s) outside --relative-to`,
     );
+  }
+
+  // FlatGeobuf infers column types from the first feature. Start with a
+  // Boolean verdict when available, or omit the column when all are unknown.
+  const firstValidated = features.findIndex(({ properties }) => properties.validity !== null);
+  if (firstValidated === -1) {
+    delete features[0].properties.validity;
+  } else if (firstValidated > 0) {
+    const [validated] = features.splice(firstValidated, 1);
+    features.unshift(validated);
   }
 
   await mkdir(path.dirname(resolvedOutput), { recursive: true });

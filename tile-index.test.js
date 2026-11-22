@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { deserialize, serialize } from "flatgeobuf/lib/mjs/geojson.js";
+import { buildTileIndex } from "./index_cityjsonl_tiles.js";
 import { tileIndexFeatureToItem } from "./tile-index.js";
 
 const indexUrl = "https://3dbag.fsn1.your-objectstorage.com/v20250903/tile_index.fgb";
@@ -29,6 +33,33 @@ test("loads a 3DBAG download URL and polygon bounds from FlatGeobuf", async () =
   assert.equal(tile.tileUrl, downloadUrl);
   assert.deepEqual(tile.bounds, [203593.331, 324890.397, 205593.331, 326890.397]);
   assert.equal(tile.count, null);
+  assert.equal(tile.validity, null);
+});
+
+test("round-trips file-wide val3dity verdicts alongside unvalidated tiles", async (t) => {
+  const inputDir = await mkdtemp(path.join(tmpdir(), "ticj-tiles-"));
+  t.after(() => rm(inputDir, { recursive: true, force: true }));
+  const output = path.join(inputDir, "tile_index.fgb");
+  const expected = { "a-unknown": null, "b-invalid": false, "c-valid": true };
+
+  for (const [tileId, validity] of Object.entries(expected)) {
+    const header = { type: "CityJSON", version: "2.0", CityObjects: {}, vertices: [] };
+    if (validity !== null) {
+      header["+val3dity-report"] = { val3dity_version: "2.7.0", validity };
+    }
+    const feature = { type: "CityJSONFeature", vertices: [[0, 0, 0], [1, 1, 0]] };
+    const jsonl = [header, feature].map((record) => JSON.stringify(record)).join("\n");
+    await writeFile(path.join(inputDir, `${tileId}.city.jsonl`), jsonl);
+  }
+
+  await buildTileIndex({ inputDir, output, logger: { log() {} } });
+  const actual = {};
+  for await (const feature of deserialize(await readFile(output))) {
+    const tile = tileIndexFeatureToItem(feature, 0, indexUrl);
+    assert.equal(feature.properties.validity, expected[tile.tileId] ?? undefined);
+    actual[tile.tileId] = tile.validity;
+  }
+  assert.deepEqual(actual, expected);
 });
 
 test("preserves filepath indexes with explicit bounds and feature counts", () => {

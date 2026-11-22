@@ -24,6 +24,7 @@ export function tileIndexFeatureToItem(feature, index, sourceUrl) {
     bounds,
     depth: 0,
     count: Number.isFinite(featureCount) && featureCount >= 0 ? featureCount : null,
+    validity: typeof properties.validity === "boolean" ? properties.validity : null,
     firstFeature: index,
     tileId,
     filepath,
