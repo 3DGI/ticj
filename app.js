@@ -42,12 +42,13 @@ const loadUrlButton = document.querySelector("#loadUrlButton");
 const thresholdInput = document.querySelector("#thresholdInput");
 const thresholdNumber = document.querySelector("#thresholdNumber");
 const thresholdValue = document.querySelector("#thresholdValue");
+const multiTileSelection = document.querySelector("#multiTileSelection");
 const fitButton = document.querySelector("#fitButton");
 const clearButton = document.querySelector("#clearButton");
 const openCjLoupeButton = document.querySelector("#openCjLoupeButton");
 const projectionSelect = document.querySelector("#projectionSelect");
 const statusEl = document.querySelector("#status");
-const fcbOnlyElements = document.querySelectorAll("[data-source-mode='fcb']");
+const sourceModeElements = document.querySelectorAll("[data-source-mode]");
 
 const featureCountEl = document.querySelector("#featureCount");
 const nodeSizeEl = document.querySelector("#nodeSize");
@@ -662,8 +663,8 @@ function setButtons(enabled) {
 }
 
 function setSourceModeUi(mode) {
-  for (const element of fcbOnlyElements) {
-    element.hidden = mode !== FCB_SOURCE_KIND;
+  for (const element of sourceModeElements) {
+    element.hidden = element.dataset.sourceMode !== mode;
   }
   if (mode !== FGB_TILE_INDEX_SOURCE_KIND) {
     tileErrorsEl.hidden = true;
@@ -1068,6 +1069,18 @@ thresholdNumber.addEventListener("change", () => syncThreshold(thresholdNumber.v
 
 fitButton.addEventListener("click", fitToExtent);
 
+multiTileSelection.addEventListener("change", () => {
+  if (multiTileSelection.checked || app?.mode !== FGB_TILE_INDEX_SOURCE_KIND || app.selected.size <= 1) {
+    return;
+  }
+
+  const lastSelected = [...app.selected.values()].at(-1);
+  app.selected.clear();
+  app.selected.set(lastSelected.key, lastSelected);
+  updateSelectionStats();
+  cellsLayer.changed();
+});
+
 clearButton.addEventListener("click", () => {
   if (!app) {
     return;
@@ -1130,6 +1143,9 @@ map.on("singleclick", (event) => {
   if (app.selected.has(item.key)) {
     app.selected.delete(item.key);
   } else {
+    if (app.mode === FGB_TILE_INDEX_SOURCE_KIND && !multiTileSelection.checked) {
+      app.selected.clear();
+    }
     app.selected.set(item.key, item);
   }
   updateSelectionStats();
