@@ -1,4 +1,6 @@
 export const FGB_TILE_INDEX_SOURCE_KIND = "fgb-tile-index";
+const TILE_ID_TRIPLET = /^(-?\d+)[-/_](-?\d+)[-/_](-?\d+)$/;
+const TILE_ID_SUFFIX = /[-_](\d+)[-_](\d+)[-_](\d+)$/;
 
 export function tileIndexFeatureToItem(feature, index, sourceUrl) {
   const properties = feature?.properties ?? {};
@@ -34,6 +36,25 @@ export function tileIndexFeatureToItem(feature, index, sourceUrl) {
     filepath,
     tileUrl: resolveTileUrl(filepath, sourceUrl),
   };
+}
+
+export function tileDownloadFilename({ tileId, tileUrl }) {
+  const pathParts = new URL(tileUrl).pathname.split("/");
+  let filename = pathParts.at(-1) || "tile";
+  try {
+    filename = decodeURIComponent(filename);
+  } catch {
+    // Keep the original URL segment if it contains invalid escape sequences.
+  }
+
+  const id = tileId.trim();
+  const stem = filename.replace(/(?:\.city)?\.(?:jsonl?|ndjson)(?:\.gz)?$/i, "");
+  const triplet = id.match(TILE_ID_TRIPLET)
+    ?? id.match(TILE_ID_SUFFIX)
+    ?? stem.match(TILE_ID_TRIPLET)
+    ?? stem.match(TILE_ID_SUFFIX)
+    ?? [...pathParts.slice(-3, -1), stem].join("/").match(TILE_ID_TRIPLET);
+  return triplet ? `${triplet.slice(1).join("-")}.city.jsonl` : filename;
 }
 
 function isErrorCount(entry) {

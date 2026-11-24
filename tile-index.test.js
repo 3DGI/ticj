@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { deserialize, serialize } from "flatgeobuf/lib/mjs/geojson.js";
 import { buildTileIndex } from "./index_cityjsonl_tiles.js";
-import { aggregateTileErrors, hasTileErrorCounts, tileIndexFeatureToItem } from "./tile-index.js";
+import { aggregateTileErrors, hasTileErrorCounts, tileDownloadFilename, tileIndexFeatureToItem } from "./tile-index.js";
 
 const indexUrl = "https://3dbag.fsn1.your-objectstorage.com/v20250903/tile_index.fgb";
 const downloadUrl = "https://3dbag.fsn1.your-objectstorage.com/v20250903/tiles/8/760/72/8-760-72.city.json.gz";
@@ -165,6 +165,16 @@ test("preserves filepath indexes with explicit bounds and feature counts", () =>
   assert.equal(tile.count, 256);
   assert.equal(tile.firstFeature, 3);
   assert.deepEqual(tile.bounds, [100000, 400000, 101000, 401000]);
+});
+
+test("uses the tile ID or source path for the CityJSONL download filename", () => {
+  const filename = (tileId, url) => tileDownloadFilename({ tileId, tileUrl: new URL(url, indexUrl).href });
+  assert.equal(filename("8/760/72", "generic.ndjson"), "8-760-72.city.jsonl");
+  assert.equal(filename("2-48-16", "reconstruction-1-2-3.ndjson"), "2-48-16.city.jsonl");
+  assert.equal(filename("reconstruction-2-48-16", "generic.ndjson"), "2-48-16.city.jsonl");
+  assert.equal(filename("legacy", "reconstruction_2-48-16.ndjson?download=1"), "2-48-16.city.jsonl");
+  assert.equal(filename("legacy", "tiles/8/760/72.ndjson"), "8-760-72.city.jsonl");
+  assert.equal(filename("downtown", "downtown%20east.city.jsonl"), "downtown east.city.jsonl");
 });
 
 test("prefers filepath and falls back to cj_download when filepath is empty", () => {

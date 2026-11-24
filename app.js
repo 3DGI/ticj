@@ -13,7 +13,7 @@ import { register } from "ol/proj/proj4.js";
 import { get as getProjection, transform } from "ol/proj.js";
 import { deserialize as deserializeFlatGeobuf } from "flatgeobuf/lib/mjs/geojson.js";
 import proj4 from "proj4";
-import { aggregateTileErrors, FGB_TILE_INDEX_SOURCE_KIND, hasTileErrorCounts, tileIndexFeatureToItem, validExtent } from "./tile-index.js";
+import { aggregateTileErrors, FGB_TILE_INDEX_SOURCE_KIND, hasTileErrorCounts, tileDownloadFilename, tileIndexFeatureToItem, validExtent } from "./tile-index.js";
 
 const MAGIC = [0x66, 0x63, 0x62, 0x01, 0x66, 0x63, 0x62, 0x00];
 const FGB_MAGIC = [0x66, 0x67, 0x62, 0x03, 0x66, 0x67, 0x62, 0x00];
@@ -90,6 +90,7 @@ class UrlSource {
     this.url = new URL(url, window.location.href).href;
     this.label = this.url;
     this.size = null;
+    this.downloadPathPrefix = null;
   }
 
   async read(start, length) {
@@ -111,6 +112,9 @@ class UrlSource {
     const response = await fetch(this.url);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}; could not fetch ${this.url}.`);
+    }
+    if (new URL(response.url).origin === window.location.origin) {
+      this.downloadPathPrefix = response.headers.get("X-Ticj-Download-Prefix");
     }
     return new Uint8Array(await response.arrayBuffer());
   }
@@ -592,7 +596,7 @@ function updateHeaderStats() {
 }
 
 function updateSelectionStats() {
-  downloadTileButton.hidden = !selectedTileDownloadUrl();
+  downloadTileButton.hidden = !selectedTileForDownload();
   if (!app) {
     selectedCountEl.textContent = "0";
     return;
@@ -965,47 +969,40 @@ async function getSelectedCjLoupeUrl() {
   return buildByteRangeCjLoupeUrl(app.index.source.url, ranges);
 }
 
-function firstSelectedItem() {
-  return selectedItems()[0] ?? null;
-}
-
-function selectedTileDownloadUrl() {
+function selectedTileForDownload() {
   if (app?.mode !== FGB_TILE_INDEX_SOURCE_KIND || multiTileSelection.checked || app.selected.size !== 1) {
     return null;
   }
-  return firstSelectedItem().tileUrl;
+  const [tile] = app.selected.values();
+  return tile.tileUrl ? tile : null;
 }
 
-async function downloadTile(tileUrl) {
-  const url = new URL(tileUrl);
+async function downloadTile(tile) {
   const link = document.createElement("a");
-  link.href = url.href;
-  link.download = "";
+  link.download = tileDownloadFilename(tile);
 
-  if (url.origin !== window.location.origin) {
-    const response = await fetch(url).catch(() => null);
-    if (!response) {
-      // The browser can follow the tile URL when the server blocks CORS requests.
-      window.location.assign(url.href);
-      return;
-    }
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} while downloading the tile.`);
-    }
-
-    const filename = url.pathname.split("/").at(-1) || "tile";
-    link.download = filename;
-    try {
-      link.download = decodeURIComponent(filename);
-    } catch {
-      // Keep the original URL segment if it contains invalid escape sequences.
-    }
-    const blobUrl = URL.createObjectURL(await response.blob());
-    link.href = blobUrl;
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+  const url = new URL(tile.tileUrl);
+  const { downloadPathPrefix } = app.source;
+  if (downloadPathPrefix && url.origin === window.location.origin && url.pathname.startsWith(downloadPathPrefix)) {
+    url.searchParams.set("download", link.download);
+    link.href = url.href;
+    link.click();
+    return;
   }
 
+  const response = await fetch(tile.tileUrl).catch((error) => {
+    throw new Error("Could not fetch the tile for download. Check that the tile URL is reachable and allows cross-origin requests.", { cause: error });
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} while downloading the tile.`);
+  }
+
+  // Drop the response MIME type so the browser uses the requested extension.
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob.slice());
+  link.href = blobUrl;
   link.click();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
 }
 
 function selectedItems() {
@@ -1133,9 +1130,9 @@ clearButton.addEventListener("click", () => {
 });
 
 downloadTileButton.addEventListener("click", () => {
-  const tileUrl = selectedTileDownloadUrl();
-  if (tileUrl) {
-    return downloadTile(tileUrl).catch(showError);
+  const tile = selectedTileForDownload();
+  if (tile) {
+    return downloadTile(tile).catch(showError);
   }
 });
 

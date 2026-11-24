@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { buildTileIndex, DEFAULT_PATTERN } from "./index_cityjsonl_tiles.js";
 
@@ -150,6 +151,14 @@ function contentType(filePath) {
   return MIME_TYPES.get(path.extname(filePath).toLowerCase()) ?? "application/octet-stream";
 }
 
+function attachmentDisposition(downloadName) {
+  const name = downloadName.replace(/[\x00-\x1f\x7f/\\]/g, "_").trim();
+  const ascii = name.replace(/[^\x20-\x7e]|["%]/g, "_");
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
 function corsHeaders() {
   return {
     "access-control-allow-headers": "Range, Content-Type",
@@ -188,7 +197,7 @@ function parseRange(rangeHeader, size) {
   return { start, end: Math.min(end, size - 1) };
 }
 
-async function serveFile(request, response, filePath) {
+async function serveFile(request, response, filePath, isDataFile, downloadName) {
   let stats;
   try {
     stats = await stat(filePath);
@@ -207,34 +216,28 @@ async function serveFile(request, response, filePath) {
   const headers = {
     "accept-ranges": "bytes",
     "cache-control": "no-cache",
-    "content-type": contentType(filePath),
+    "content-type": downloadName ? "application/octet-stream" : contentType(filePath),
     ...corsHeaders(),
   };
-
-  const range = parseRange(request.headers.range, stats.size);
-  if (range) {
-    response.writeHead(206, {
-      ...headers,
-      "content-length": String(range.end - range.start + 1),
-      "content-range": `bytes ${range.start}-${range.end}/${stats.size}`,
-    });
-    if (request.method === "HEAD") {
-      response.end();
-      return;
-    }
-    createReadStream(filePath, range).pipe(response);
-    return;
+  if (isDataFile) {
+    headers["x-ticj-download-prefix"] = DATA_PREFIX;
+  }
+  if (downloadName) {
+    headers["content-disposition"] = attachmentDisposition(downloadName);
   }
 
-  response.writeHead(200, {
-    ...headers,
-    "content-length": String(stats.size),
-  });
+  const range = parseRange(request.headers.range, stats.size);
+  headers["content-length"] = String(range ? range.end - range.start + 1 : stats.size);
+  if (range) {
+    headers["content-range"] = `bytes ${range.start}-${range.end}/${stats.size}`;
+  }
+
+  response.writeHead(range ? 206 : 200, headers);
   if (request.method === "HEAD") {
     response.end();
     return;
   }
-  createReadStream(filePath).pipe(response);
+  await pipeline(createReadStream(filePath, range ?? undefined), response);
 }
 
 function createTicjServer({ distDir, dataRoot, indexUrl }) {
@@ -262,7 +265,8 @@ function createTicjServer({ distDir, dataRoot, indexUrl }) {
       return;
     }
 
-    const filePath = requestUrl.pathname.startsWith(DATA_PREFIX)
+    const isDataFile = requestUrl.pathname.startsWith(DATA_PREFIX);
+    const filePath = isDataFile
       ? safeResolve(dataRoot, requestUrl.pathname, DATA_PREFIX)
       : safeResolve(distDir, requestUrl.pathname);
 
@@ -272,8 +276,11 @@ function createTicjServer({ distDir, dataRoot, indexUrl }) {
       return;
     }
 
-    serveFile(request, response, filePath).catch((error) => {
+    const downloadName = isDataFile ? requestUrl.searchParams.get("download")?.trim() : null;
+    serveFile(request, response, filePath, isDataFile, downloadName).catch((error) => {
+      if (error.code === "ERR_STREAM_PREMATURE_CLOSE") return;
       console.error(`server error: ${error.message}`);
+      if (response.destroyed) return;
       if (!response.headersSent) {
         response.writeHead(500, { "content-type": "text/plain; charset=utf-8", ...corsHeaders() });
       }
