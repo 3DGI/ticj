@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { deserialize, serialize } from "flatgeobuf/lib/mjs/geojson.js";
 import { buildTileIndex } from "./index_cityjsonl_tiles.js";
-import { aggregateTileErrors, tileIndexFeatureToItem } from "./tile-index.js";
+import { aggregateTileErrors, hasTileErrorCounts, tileIndexFeatureToItem } from "./tile-index.js";
 
 const indexUrl = "https://3dbag.fsn1.your-objectstorage.com/v20250903/tile_index.fgb";
 const downloadUrl = "https://3dbag.fsn1.your-objectstorage.com/v20250903/tiles/8/760/72/8-760-72.city.json.gz";
@@ -35,6 +35,7 @@ test("loads a 3DBAG download URL and polygon bounds from FlatGeobuf", async () =
   assert.equal(tile.count, null);
   assert.equal(tile.validity, null);
   assert.equal(tile.errorCounts, null);
+  assert.equal(hasTileErrorCounts(tile), false);
 });
 
 test("round-trips file-wide val3dity verdicts alongside unvalidated tiles", async (t) => {
@@ -64,6 +65,7 @@ test("round-trips file-wide val3dity verdicts alongside unvalidated tiles", asyn
     tiles.push(tile);
   }
   assert.deepEqual(actual, expected);
+  assert.deepEqual(tiles.filter(hasTileErrorCounts).map((tile) => tile.tileId), ["c-valid"]);
   assert.deepEqual(aggregateTileErrors(tiles), { errorCounts: [], total: 0, tileCount: 1 });
 });
 

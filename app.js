@@ -13,7 +13,7 @@ import { register } from "ol/proj/proj4.js";
 import { get as getProjection, transform } from "ol/proj.js";
 import { deserialize as deserializeFlatGeobuf } from "flatgeobuf/lib/mjs/geojson.js";
 import proj4 from "proj4";
-import { aggregateTileErrors, FGB_TILE_INDEX_SOURCE_KIND, tileIndexFeatureToItem, validExtent } from "./tile-index.js";
+import { aggregateTileErrors, FGB_TILE_INDEX_SOURCE_KIND, hasTileErrorCounts, tileIndexFeatureToItem, validExtent } from "./tile-index.js";
 
 const MAGIC = [0x66, 0x63, 0x62, 0x01, 0x66, 0x63, 0x62, 0x00];
 const FGB_MAGIC = [0x66, 0x67, 0x62, 0x03, 0x66, 0x67, 0x62, 0x00];
@@ -46,6 +46,7 @@ const multiTileSelection = document.querySelector("#multiTileSelection");
 const fitButton = document.querySelector("#fitButton");
 const clearButton = document.querySelector("#clearButton");
 const openCjLoupeButton = document.querySelector("#openCjLoupeButton");
+const downloadTileButton = document.querySelector("#downloadTileButton");
 const projectionSelect = document.querySelector("#projectionSelect");
 const statusEl = document.querySelector("#status");
 const sourceModeElements = document.querySelectorAll("[data-source-mode]");
@@ -591,6 +592,7 @@ function updateHeaderStats() {
 }
 
 function updateSelectionStats() {
+  downloadTileButton.hidden = !selectedTileDownloadUrl();
   if (!app) {
     selectedCountEl.textContent = "0";
     return;
@@ -607,19 +609,17 @@ function updateSelectionStats() {
 
 function updateTileErrorDetails() {
   if (tileErrorsEl.hidden) return;
-  const tiles = selectedItems().filter((tile) => tile.errorCounts !== null);
+  const tiles = selectedItems().filter(hasTileErrorCounts);
   tileErrorDetailsEl.hidden = tiles.length === 0;
   tileErrorDetailsEl.replaceChildren(...tiles.map(renderTileErrorDetails));
 }
 
 function renderAllTileErrors(tiles) {
-  tileErrorsEl.hidden = !tiles.some((tile) => tile.errorCounts !== null);
+  const { errorCounts, total, tileCount } = aggregateTileErrors(tiles);
+  tileErrorsEl.hidden = tileCount === 0;
   if (tileErrorsEl.hidden) return;
 
-  const { errorCounts, total, tileCount } = aggregateTileErrors(tiles);
-  allTileErrorSummaryEl.textContent = tileCount === 0
-    ? "Error details unavailable"
-    : `${formatErrorTotal(total)} · Counts available for ${tileCount.toLocaleString()} of ${tiles.length.toLocaleString()} tiles`;
+  allTileErrorSummaryEl.textContent = `${formatErrorTotal(total)} · Counts available for ${tileCount.toLocaleString()} of ${tiles.length.toLocaleString()} tiles`;
   allTileErrorDetailsEl.replaceChildren();
   if (errorCounts.length > 0) {
     allTileErrorDetailsEl.append(renderErrorCountTable(errorCounts));
@@ -629,8 +629,7 @@ function renderAllTileErrors(tiles) {
 function renderTileErrorDetails(tile) {
   if (tile.errorCounts.length === 0) {
     const summary = document.createElement("p");
-    const message = tile.validity === true ? "No errors reported" : "Error details unavailable";
-    summary.textContent = `Tile ${tile.tileId} · ${message}`;
+    summary.textContent = `Tile ${tile.tileId} · No errors reported`;
     return summary;
   }
   return renderErrorCountTable(tile.errorCounts, `Tile ${tile.tileId}`);
@@ -970,6 +969,45 @@ function firstSelectedItem() {
   return selectedItems()[0] ?? null;
 }
 
+function selectedTileDownloadUrl() {
+  if (app?.mode !== FGB_TILE_INDEX_SOURCE_KIND || multiTileSelection.checked || app.selected.size !== 1) {
+    return null;
+  }
+  return firstSelectedItem().tileUrl;
+}
+
+async function downloadTile(tileUrl) {
+  const url = new URL(tileUrl);
+  const link = document.createElement("a");
+  link.href = url.href;
+  link.download = "";
+
+  if (url.origin !== window.location.origin) {
+    const response = await fetch(url).catch(() => null);
+    if (!response) {
+      // The browser can follow the tile URL when the server blocks CORS requests.
+      window.location.assign(url.href);
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} while downloading the tile.`);
+    }
+
+    const filename = url.pathname.split("/").at(-1) || "tile";
+    link.download = filename;
+    try {
+      link.download = decodeURIComponent(filename);
+    } catch {
+      // Keep the original URL segment if it contains invalid escape sequences.
+    }
+    const blobUrl = URL.createObjectURL(await response.blob());
+    link.href = blobUrl;
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+  }
+
+  link.click();
+}
+
 function selectedItems() {
   return [...app.selected.values()].sort((a, b) => a.firstFeature - b.firstFeature);
 }
@@ -1019,8 +1057,10 @@ function tileTooltipLines(item) {
     `tile ${item.tileId}`,
     item.filepath,
     item.count === null ? "Feature count unavailable" : `${item.count.toLocaleString()} features`,
-    item.validity === null ? "Val3dity verdict unavailable" : item.validity ? "Valid (val3dity)" : "Invalid (val3dity)",
   ];
+  if (item.validity !== null) {
+    lines.push(item.validity ? "Valid (val3dity)" : "Invalid (val3dity)");
+  }
   if (item.errorCounts?.length) {
     const count = item.errorCounts.reduce((sum, entry) => sum + entry.count, 0);
     lines.push(formatErrorTotal(count));
@@ -1070,15 +1110,17 @@ thresholdNumber.addEventListener("change", () => syncThreshold(thresholdNumber.v
 fitButton.addEventListener("click", fitToExtent);
 
 multiTileSelection.addEventListener("change", () => {
-  if (multiTileSelection.checked || app?.mode !== FGB_TILE_INDEX_SOURCE_KIND || app.selected.size <= 1) {
+  if (app?.mode !== FGB_TILE_INDEX_SOURCE_KIND) {
     return;
   }
 
-  const lastSelected = [...app.selected.values()].at(-1);
-  app.selected.clear();
-  app.selected.set(lastSelected.key, lastSelected);
+  if (!multiTileSelection.checked && app.selected.size > 1) {
+    const lastSelected = [...app.selected.values()].at(-1);
+    app.selected.clear();
+    app.selected.set(lastSelected.key, lastSelected);
+    cellsLayer.changed();
+  }
   updateSelectionStats();
-  cellsLayer.changed();
 });
 
 clearButton.addEventListener("click", () => {
@@ -1088,6 +1130,13 @@ clearButton.addEventListener("click", () => {
   app.selected.clear();
   updateSelectionStats();
   cellsLayer.changed();
+});
+
+downloadTileButton.addEventListener("click", () => {
+  const tileUrl = selectedTileDownloadUrl();
+  if (tileUrl) {
+    return downloadTile(tileUrl).catch(showError);
+  }
 });
 
 openCjLoupeButton.addEventListener("click", async () => {

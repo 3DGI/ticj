@@ -41,15 +41,18 @@ function isErrorCount(entry) {
     && Number.isSafeInteger(entry.code) && Number.isSafeInteger(entry.count) && entry.count > 0;
 }
 
+export function hasTileErrorCounts({ errorCounts, validity }) {
+  return errorCounts !== null && (errorCounts.length > 0 || validity === true);
+}
+
 export function aggregateTileErrors(tiles) {
   const counts = new Map();
   let total = 0;
   let tileCount = 0;
   for (const tile of tiles) {
-    const { errorCounts, validity } = tile;
-    if (errorCounts === null || (errorCounts.length === 0 && validity !== true)) continue;
+    if (!hasTileErrorCounts(tile)) continue;
     tileCount += 1;
-    for (const { lod, code, count } of errorCounts) {
+    for (const { lod, code, count } of tile.errorCounts) {
       const key = JSON.stringify([lod, code]);
       const aggregate = counts.get(key) ?? { lod, code, count: 0 };
       aggregate.count += count;
